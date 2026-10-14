@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Slimme Notitieboek - Prototype</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 20px auto; padding: 20px; background: #f9f9f9; }
+h1 { font-size: 1.5em; }
+#capture { width: 100%; padding: 12px; font-size: 16px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 20px; }
+.tabs { display: flex; margin-bottom: 20px; }
+.tabs button { flex: 1; padding: 10px; border: none; background: #eee; cursor: pointer; }
+.tabs button.active { background: #007aff; color: white; }
+.item { background: white; padding: 12px; margin-bottom: 8px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.item .meta { font-size: 0.85em; color: #666; margin-top: 4px; }
+.badge { background: #e0e0e0; padding: 2px 6px; border-radius: 4px; font-size: 0.8em; margin-right: 4px; }
+.actions button { margin-right: 6px; padding: 4px 8px; font-size: 0.85em; }
+.note { border-left: 4px solid #ffcc00; }
+.task { border-left: 4px solid #007aff; }
+.priority { float: right; font-weight: bold; color: #007aff; }
+</style>
+</head>
+<body>
+<h1>Slimme Notitieboek</h1>
+<input id="capture" placeholder="Typ iets... (taak, idee, opmerking, order 123 revisie...)" autofocus>
+<div class="tabs">
+  <button id="tab-today" class="active" onclick="showTab('today')">Vandaag</button>
+  <button id="tab-notes" onclick="showTab('notes')">Notities</button>
+  <button id="tab-projects" onclick="showTab('projects')">Projecten</button>
+</div>
+<div id="content"></div>
+
+<script>
+let items = JSON.parse(localStorage.getItem('snb_items') || '[]');
+let currentTab = 'today';
+
+const stages = ['Goedkeurtekeningen', 'Revisies', 'Productie klaar maken', 'Map maken'];
+
+function save() {
+  localStorage.setItem('snb_items', JSON.stringify(items));
+}
+
+function classify(text) {
+  const lower = text.toLowerCase();
+  let type = 'task';
+  let stage = null;
+  let project = null;
+  let priority = 5;
+
+  if (lower.includes('notitie:') || lower.includes('idee:') || lower.includes('gedachte:') || lower.includes('opmerking:')) {
+    type = 'note';
+  }
+  if (lower.includes('urgent') || lower.includes('nu') || lower.includes('snel')) priority += 5;
+  if (lower.includes('goedkeur')) stage = 'Goedkeurtekeningen';
+  if (lower.includes('revisie')) stage = 'Revisies';
+  if (lower.includes('productie')) stage = 'Productie klaar maken';
+  if (lower.includes('map')) stage = 'Map maken';
+
+  const orderMatch = text.match(/order\s*(\w+)/i);
+  if (orderMatch) project = 'Order ' + orderMatch[1];
+
+  return { type, stage, project, priority, text: text.replace(/^(notitie:|idee:|gedachte:|opmerking:)\s*/i, '') };
+}
+
+document.getElementById('capture').addEventListener('keypress', function(e) {
+  if (e.key === 'Enter' && this.value.trim()) {
+    const data = classify(this.value.trim());
+    items.push({
+      id: Date.now(),
+      ...data,
+      created: new Date().toISOString(),
+      done: false
+    });
+    save();
+    this.value = '';
+    render();
+  }
+});
+
+function showTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  render();
+}
+
+function render() {
+  const content = document.getElementById('content');
+  let html = '';
+
+  if (currentTab === 'today') {
+    const tasks = items.filter(i => i.type === 'task' && !i.done).sort((a,b) => b.priority - a.priority);
+    if (tasks.length === 0) html = '<p>Geen taken. Typ iets om te beginnen.</p>';
+    tasks.forEach(item => {
+      html += `<div class="item task">
+        <span class="priority">${item.priority}</span>
+        <strong>${item.text}</strong>
+        <div class="meta">
+          ${item.project ? `<span class="badge">${item.project}</span>` : ''}
+          ${item.stage ? `<span class="badge">${item.stage}</span>` : ''}
+          <div class="actions">
+            <button onclick="markDone(${item.id})">Klaar</button>
+            <button onclick="toNote(${item.id})">Maak notitie</button>
+            <button onclick="deleteItem(${item.id})">Verwijder</button>
+          </div>
+        </div>
+      </div>`;
+    });
+  } else if (currentTab === 'notes') {
+    const notes = items.filter(i => i.type === 'note');
+    if (notes.length === 0) html = '<p>Geen notities. Typ "idee: ..." of "notitie: ..."</p>';
+    notes.forEach(item => {
+      html += `<div class="item note">
+        <strong>${item.text}</strong>
+        <div class="meta">
+          ${item.project ? `<span class="badge">${item.project}</span>` : ''}
+          ${item.stage ? `<span class="badge">${item.stage}</span>` : ''}
+          <div class="actions">
+            <button onclick="toTask(${item.id})">Maak taak</button>
+            <button onclick="deleteItem(${item.id})">Verwijder</button>
+          </div>
+        </div>
+      </div>`;
+    });
+  } else if (currentTab === 'projects') {
+    const projects = {};
+    items.forEach(item => {
+      if (item.project) {
+        if (!projects[item.project]) projects[item.project] = [];
+        projects[item.project].push(item);
+      }
+    });
+    if (Object.keys(projects).length === 0) html = '<p>Geen projecten. Noem "order 123" in een item.</p>';
+    for (const [proj, projItems] of Object.entries(projects)) {
+      html += `<h3>${proj}</h3>`;
+      stages.forEach(stage => {
+        const stageItems = projItems.filter(i => i.stage === stage);
+        if (stageItems.length) {
+          html += `<strong>${stage}</strong><ul>`;
+          stageItems.forEach(i => html += `<li>${i.text} (${i.type})</li>`);
+          html += `</ul>`;
+        }
+      });
+    }
+  }
+  content.innerHTML = html;
+}
+
+function markDone(id) {
+  const item = items.find(i => i.id === id);
+  if (item) item.done = true;
+  save();
+  render();
+}
+
+function toNote(id) {
+  const item = items.find(i => i.id === id);
+  if (item) item.type = 'note';
+  save();
+  render();
+}
+
+function toTask(id) {
+  const item = items.find(i => i.id === id);
+  if (item) { item.type = 'task'; item.priority = item.priority || 5; }
+  save();
+  render();
+}
+
+function deleteItem(id) {
+  items = items.filter(i => i.id !== id);
+  save();
+  render();
+}
+
+render();
+</script>
+</body>
+</html>
